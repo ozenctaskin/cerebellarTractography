@@ -1,4 +1,4 @@
-function cerebellumAtlasInT1(inputT1, inputT2, parcellations)
+function cerebellumAtlasInT1(inputT1, inputT2, MNItemplate, parcellations)
 
 % Warp cerebellum parcellation to anatomical coordinates. This script also
 % linearly registers T2 to T1 image using SPM functions. 
@@ -7,6 +7,10 @@ function cerebellumAtlasInT1(inputT1, inputT2, parcellations)
 %   inputT1: T1 anatomical image path. 
 %   inputT2: T2 anatomical path. Optional. Enter 'NA' if you want to do the
 %            reconstruction just with the T1 image
+%   MNItemplate: Path to an MNI template. One can be found in fsl directory
+%   (e.g. /fsl/data/standard/MNI152_T1_1mm.nii.gz. Use the isotropic
+%   template that is in the same resolution with you input T1. If your T1
+%   is 1mm iso use MNI152_T1_1mm.nii.gz. If it is 2mm iso, use MNI152_T1_2mm.nii.gz
 %   parcellations: SUIT Cerebellum parcellations. You can download one from
 %   here: https://github.com/DiedrichsenLab/cerebellar_atlases/tree/master.
 %   e.g. in Diedrichsen, Ji, Buckner. Make sure to input the files with 
@@ -36,10 +40,23 @@ if ~strcmp(inputT2, 'NA')
     end
 end
 
+% Do a linear registration between T1 and MNI template so that we put the
+% T1 image in the ACPC orientation
+[MNIpath, MNIname, MNIextension] = fileparts(MNItemplate);
+if strcmp(MNIextension, '.gz')
+    gunzip(MNItemplate, T1path)
+    MNItemplateUzipped = fullfile(T1path, MNIname);
+end
+matlabbatch{1}.spm.spatial.coreg.estwrite.ref = {MNItemplateUzipped};
+matlabbatch{1}.spm.spatial.coreg.estwrite.source = {inputT1};
+matlabbatch{1}.spm.spatial.coreg.estwrite.roptions.prefix = 'acpc_';
+spm_jobman('run', matlabbatch);
+acpcT1 = fullfile(T1path, ['acpc_' T1name T1extension]);
+
 % Do a linear registration between T2 and T1 images using SPM. That's if a
 % T2 image is inputted.
 if ~strcmp(inputT2, 'NA')
-    matlabbatch{1}.spm.spatial.coreg.estwrite.ref = {inputT1};
+    matlabbatch{1}.spm.spatial.coreg.estwrite.ref = {acpcT1};
     matlabbatch{1}.spm.spatial.coreg.estwrite.source = {inputT2};
     matlabbatch{1}.spm.spatial.coreg.estwrite.roptions.prefix = 'registered';
     spm_jobman('run', matlabbatch);
@@ -49,9 +66,9 @@ end
 
 % Setup the anatomy cell for SUIT processing 
 if ~strcmp(inputT2, 'NA')
-    anatomy = {inputT1, inputT2};
+    anatomy = {acpcT1, inputT2};
 else
-    anatomy = {inputT1};
+    anatomy = {acpcT1};
 end
 
 % Get T1 and T2 and segment cerebellumn
