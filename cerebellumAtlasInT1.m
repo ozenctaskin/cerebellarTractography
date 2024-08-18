@@ -51,6 +51,7 @@ matlabbatch{1}.spm.spatial.coreg.estwrite.ref = {MNItemplateUzipped};
 matlabbatch{1}.spm.spatial.coreg.estwrite.source = {inputT1};
 matlabbatch{1}.spm.spatial.coreg.estwrite.roptions.prefix = 'acpc_';
 spm_jobman('run', matlabbatch);
+[T1path, T1name, T1extension] = fileparts(inputT1);
 acpcT1 = fullfile(T1path, ['acpc_' T1name T1extension]);
 
 % Do a linear registration between T2 and T1 images using SPM. That's if a
