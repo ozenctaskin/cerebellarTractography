@@ -21,11 +21,12 @@ function cerebellumAtlasInT1(inputT1, inputT2, MNItemplate, parcellations)
 % the "iw_atl-" in the name.
 %
 
-% Set suit and SPM defaults
+%% Set Suit defaults
 suit_defaults();
 spm('Defaults','fMRI');
 spm_jobman('initcfg');
 
+%% Create workdir and prepare files 
 % Create a cerebellum script workdir where T1 image is located
 [folderPath, ~, ~] = fileparts(inputT1);
 workdir = fullfile(folderPath, 'cerebellumWorkdir');
@@ -38,28 +39,43 @@ end
 if strcmp(T1extension, '.gz')
     gunzip(inputT1, workdir);
     inputT1 = fullfile(workdir, T1name);
+else
+    system(['cp ' inputT1 ' ' workdir]);
+    inputT1 = fullfile(workdir, [T1name T1extension]);
 end
+[T1path, T1name, T1extension] = fileparts(inputT1);
+
 if ~strcmp(inputT2, 'NA')
-    [T2path, T2name, T2extension] = fileparts(inputT2);
+    [~, T2name, T2extension] = fileparts(inputT2);
     if strcmp(T2extension, '.gz')
         gunzip(inputT2, workdir);
         inputT2 = fullfile(workdir, T2name);
+    else
+        system(['cp ' inputT2 ' ' workdir]);
+        inputT2 = fullfile(workdir, [T2name T2extension]);
     end
+    [T2path, T2name, T2extension] = fileparts(inputT2);
 end
+
 if ~strcmp(MNItemplate, 'NA')
-    [MNIpath, MNIname, MNIextension] = fileparts(MNItemplate);
+    [~, MNIname, MNIextension] = fileparts(MNItemplate);
     if strcmp(MNIextension, '.gz')
         gunzip(MNItemplate, workdir);
         MNItemplateUzipped = fullfile(workdir, MNIname);
-    end
+    else
+        system(['cp ' MNItemplate ' ' workdir]);
+        MNItemplateUzipped = fullfile(workdir, [MNIname MNIextension]);
+    end  
+    [MNIpath, MNIname, MNIextension] = fileparts(MNItemplate);
 end
 
+%% Do initial registrations
 % Do a linear registration between T1 and MNI template so that we put the
 % T1 image in the ACPC orientation. Do this only if an MNI template is
 % passed and not Na
 if ~strcmp(MNItemplate, 'Na')
     % Get a copy of the T1 that we will use for reslicing at the end
-    inputT1_copy = fullfile(workdir, ['copy_' T1name]);
+    inputT1_copy = fullfile(workdir, ['copy_' T1name T1extension]);
     system(['cp ' inputT1 ' ' inputT1_copy]);
 
     % Calculate registration
@@ -73,7 +89,7 @@ if ~strcmp(MNItemplate, 'Na')
     flags= struct('interp',1,'mask',1,'mean',0,'which',1,'wrap',[0 0 0], 'prefix', 'acpc_');
     files = {MNItemplateUzipped;inputT1};
     spm_reslice(files, flags);
-    acpcT1 = fullfile(workdir, ['acpc_' T1name]);
+    acpcT1 = fullfile(workdir, ['acpc_' T1name T1extension]);
 else
     acpcT1 = inputT1;
 end
@@ -85,10 +101,10 @@ if ~strcmp(inputT2, 'Na')
     matlabbatch{1}.spm.spatial.coreg.estwrite.source = {inputT2};
     matlabbatch{1}.spm.spatial.coreg.estwrite.roptions.prefix = 'acpc_';
     spm_jobman('run', matlabbatch);
-    [T2path, T2name, T2extension] = fileparts(inputT2);
     acpcT2 = fullfile(T2path, ['acpc_' T2name T2extension]);
 end
 
+%% Run SUIT
 % Setup the anatomy cell for SUIT processing 
 if ~strcmp(inputT2, 'NA')
     anatomy = {acpcT1, acpcT2};
