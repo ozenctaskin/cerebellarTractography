@@ -26,18 +26,31 @@ suit_defaults();
 spm('Defaults','fMRI');
 spm_jobman('initcfg');
 
+% Create a cerebellum script workdir where T1 image is located
+[folderPath, ~, ~] = fileparts(inputT1);
+workdir = fullfile(folderPath, 'cerebellumWorkdir');
+if ~isfolder(workdir)
+    system(['mkdir ' workdir]);
+end
+
 % Unzip if images are nii.gz so we end up with .nii
 [T1path, T1name, T1extension] = fileparts(inputT1);
 if strcmp(T1extension, '.gz')
-    gunzip(inputT1)
-    inputT1 = fullfile(T1path, T1name);
+    gunzip(inputT1, workdir);
+    inputT1 = fullfile(workdir, T1name);
 end
-
 if ~strcmp(inputT2, 'NA')
     [T2path, T2name, T2extension] = fileparts(inputT2);
     if strcmp(T2extension, '.gz')
-        gunzip(inputT2)
-        inputT2 = fullfile(T2path, T2name);
+        gunzip(inputT2, workdir);
+        inputT2 = fullfile(workdir, T2name);
+    end
+end
+if ~strcmp(MNItemplate, 'NA')
+    [MNIpath, MNIname, MNIextension] = fileparts(MNItemplate);
+    if strcmp(MNIextension, '.gz')
+        gunzip(MNItemplate, workdir);
+        MNItemplateUzipped = fullfile(workdir, MNIname);
     end
 end
 
@@ -45,17 +58,22 @@ end
 % T1 image in the ACPC orientation. Do this only if an MNI template is
 % passed and not Na
 if ~strcmp(MNItemplate, 'Na')
-    [MNIpath, MNIname, MNIextension] = fileparts(MNItemplate);
-    if strcmp(MNIextension, '.gz')
-        gunzip(MNItemplate, T1path)
-        MNItemplateUzipped = fullfile(T1path, MNIname);
-    end
-    matlabbatch{1}.spm.spatial.coreg.estwrite.ref = {MNItemplateUzipped};
-    matlabbatch{1}.spm.spatial.coreg.estwrite.source = {inputT1};
-    matlabbatch{1}.spm.spatial.coreg.estwrite.roptions.prefix = 'acpc_';
-    spm_jobman('run', matlabbatch);
-    [T1path, T1name, T1extension] = fileparts(inputT1);
-    acpcT1 = fullfile(T1path, ['acpc_' T1name T1extension]);
+    % Get a copy of the T1 that we will use for reslicing at the end
+    inputT1_copy = fullfile(workdir, ['copy_' T1name]);
+    system(['cp ' inputT1 ' ' inputT1_copy]);
+
+    % Calculate registration
+    inputT1Loaded = spm_vol(inputT1);
+    MNItemplateLoaded = spm_vol(MNItemplateUzipped);
+    x = spm_coreg(inputT1Loaded, MNItemplateLoaded);
+    M = spm_matrix(x);
+    spm_get_space(inputT1, M * inputT1Loaded.mat);
+    
+    % Apply registration to create an ACPC T1
+    flags= struct('interp',1,'mask',1,'mean',0,'which',1,'wrap',[0 0 0], 'prefix', 'acpc_');
+    files = {MNItemplateUzipped;inputT1};
+    spm_reslice(files, flags);
+    acpcT1 = fullfile(workdir, ['acpc_' T1name]);
 else
     acpcT1 = inputT1;
 end
@@ -65,15 +83,15 @@ end
 if ~strcmp(inputT2, 'Na')
     matlabbatch{1}.spm.spatial.coreg.estwrite.ref = {acpcT1};
     matlabbatch{1}.spm.spatial.coreg.estwrite.source = {inputT2};
-    matlabbatch{1}.spm.spatial.coreg.estwrite.roptions.prefix = 'registered';
+    matlabbatch{1}.spm.spatial.coreg.estwrite.roptions.prefix = 'acpc_';
     spm_jobman('run', matlabbatch);
     [T2path, T2name, T2extension] = fileparts(inputT2);
-    inputT2 = fullfile(T2path, ['registered' T2name T2extension]);
+    acpcT2 = fullfile(T2path, ['acpc_' T2name T2extension]);
 end
 
 % Setup the anatomy cell for SUIT processing 
 if ~strcmp(inputT2, 'NA')
-    anatomy = {acpcT1, inputT2};
+    anatomy = {acpcT1, acpcT2};
 else
     anatomy = {acpcT1};
 end
@@ -90,13 +108,24 @@ job.subjND.white = {fullfile(filePath, [fileName '_seg2.nii'])};
 job.subjND.isolation = {fullfile(filePath, ['c_' fileName '_pcereb.nii'])};
 suit_normalize_dartel(job)
 
+% Combine affine matrix we get from T1-MNI registration with the one
+% calculated by SUIT so that we can map atlas back to original subject
+% coordinates 
+load(fullfile(filePath, ['Affine_' fileName '_seg1.mat']));
+Affine = Affine * M;
+save(fullfile(filePath, ['Affine_' fileName '_seg1.mat']), 'Affine');
+
 % Map atlas back to T1 coordinates
 job = [];
 job.Affine = {fullfile(filePath, ['Affine_' fileName '_seg1.mat'])};
 job.flowfield = {fullfile(filePath, ['u_a_' fileName '_seg1.nii'])};
 job.resample = {parcellations};
-job.ref = {anatomy{1}};
+job.ref = {inputT1_copy};
 suit_reslice_dartel_inv(job)
-resampledAtlas = fullfile(filePath, ['iw_atlas_u_a_' fileName '_seg1.nii']);
+
+% Move the atlas folder to the main directory
+files = dir(fullfile(filePath, 'iw*'));
+resampledAtlas = fullfile(filePath, files(1).name);
+system(['mv ' resampledAtlas ' ' fullfile(folderPath, files(1).name)]);
 
 end
